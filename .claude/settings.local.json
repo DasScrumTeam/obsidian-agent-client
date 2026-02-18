@@ -6,5 +6,14 @@
       "Bash(git checkout:*)",
       "Bash(git stash:*)"
     ]
-  }
+  },
+  "disabledMcpjsonServers": [
+    "obsidian-mcp-server",
+    "google-workspace",
+    "miro",
+    "imap",
+    "airtable",
+    "chrome-devtools",
+    "mattermost-dst"
+  ]
 }
