@@ -12,6 +12,11 @@ import type {
 	ChatViewLocation,
 } from "../../plugin";
 import { normalizeEnvVars } from "../../shared/settings-utils";
+import {
+	CHAT_FONT_SIZE_MAX,
+	CHAT_FONT_SIZE_MIN,
+	parseChatFontSize,
+} from "../../shared/display-settings";
 
 export class AgentClientSettingTab extends PluginSettingTab {
 	plugin: AgentClientPlugin;
@@ -43,6 +48,7 @@ export class AgentClientSettingTab extends PluginSettingTab {
 		docContainer.createEl("a", {
 			text: "documentation",
 			href: "https://rait-09.github.io/obsidian-agent-client/",
+			attr: { target: "_blank" },
 		});
 		docContainer.createSpan({ text: "." });
 
@@ -177,6 +183,7 @@ export class AgentClientSettingTab extends PluginSettingTab {
 			.addDropdown((dropdown) =>
 				dropdown
 					.addOption("right-tab", "Right pane (tabs)")
+					.addOption("right-split", "Right pane (split)")
 					.addOption("editor-tab", "Editor area (tabs)")
 					.addOption("editor-split", "Editor area (split)")
 					.setValue(this.plugin.settings.chatViewLocation)
@@ -186,6 +193,103 @@ export class AgentClientSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+
+		new Setting(containerEl)
+			.setName("Chat font size")
+			.setDesc(
+				`Adjust the font size of the chat message area (${CHAT_FONT_SIZE_MIN}-${CHAT_FONT_SIZE_MAX}px).`,
+			)
+			.addText((text) => {
+				const getCurrentDisplayValue = (): string => {
+					const currentFontSize =
+						this.plugin.settings.displaySettings.fontSize;
+					return currentFontSize === null
+						? ""
+						: String(currentFontSize);
+				};
+
+				const persistChatFontSize = async (
+					fontSize: number | null,
+				): Promise<void> => {
+					if (
+						this.plugin.settings.displaySettings.fontSize ===
+						fontSize
+					) {
+						return;
+					}
+
+					const nextSettings = {
+						...this.plugin.settings,
+						displaySettings: {
+							...this.plugin.settings.displaySettings,
+							fontSize,
+						},
+					};
+					await this.plugin.saveSettingsAndNotify(nextSettings);
+				};
+
+				text.setPlaceholder(
+					`${CHAT_FONT_SIZE_MIN}-${CHAT_FONT_SIZE_MAX}`,
+				)
+					.setValue(getCurrentDisplayValue())
+					.onChange(async (value) => {
+						if (value.trim().length === 0) {
+							await persistChatFontSize(null);
+							return;
+						}
+
+						const trimmedValue = value.trim();
+						if (!/^-?\d+$/.test(trimmedValue)) {
+							return;
+						}
+
+						const numericValue = Number.parseInt(trimmedValue, 10);
+						if (
+							numericValue < CHAT_FONT_SIZE_MIN ||
+							numericValue > CHAT_FONT_SIZE_MAX
+						) {
+							return;
+						}
+
+						const parsedFontSize = parseChatFontSize(numericValue);
+						if (parsedFontSize === null) {
+							return;
+						}
+
+						const hasChanged =
+							this.plugin.settings.displaySettings.fontSize !==
+							parsedFontSize;
+						if (hasChanged) {
+							await persistChatFontSize(parsedFontSize);
+						}
+					});
+
+				text.inputEl.addEventListener("blur", () => {
+					const currentInputValue = text.getValue();
+					const parsedFontSize = parseChatFontSize(currentInputValue);
+
+					if (
+						currentInputValue.trim().length > 0 &&
+						parsedFontSize === null
+					) {
+						text.setValue(getCurrentDisplayValue());
+						return;
+					}
+
+					if (parsedFontSize !== null) {
+						text.setValue(String(parsedFontSize));
+						const hasChanged =
+							this.plugin.settings.displaySettings.fontSize !==
+							parsedFontSize;
+						if (hasChanged) {
+							void persistChatFontSize(parsedFontSize);
+						}
+						return;
+					}
+
+					text.setValue("");
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Show emojis")
@@ -766,10 +870,10 @@ export class AgentClientSettingTab extends PluginSettingTab {
 		new Setting(sectionEl)
 			.setName("Path")
 			.setDesc(
-				'Absolute path to the claude-code-acp. On macOS/Linux, use "which claude-code-acp", and on Windows, use "where claude-code-acp" to find it.',
+				'Absolute path to the claude-agent-acp. On macOS/Linux, use "which claude-agent-acp", and on Windows, use "where claude-agent-acp" to find it.',
 			)
 			.addText((text) => {
-				text.setPlaceholder("Absolute path to claude-code-acp")
+				text.setPlaceholder("Absolute path to claude-agent-acp")
 					.setValue(claude.command)
 					.onChange(async (value) => {
 						this.plugin.settings.claude.command = value.trim();

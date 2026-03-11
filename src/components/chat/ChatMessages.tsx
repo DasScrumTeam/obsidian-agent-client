@@ -5,6 +5,7 @@ import type { ChatMessage } from "../../domain/models/chat-message";
 import type { IAcpClient } from "../../adapters/acp/acp.adapter";
 import type AgentClientPlugin from "../../plugin";
 import type { IChatViewHost } from "./types";
+import { setIcon } from "obsidian";
 import { MessageRenderer } from "./MessageRenderer";
 
 /**
@@ -64,7 +65,7 @@ export function ChatMessages({
 		const container = containerRef.current;
 		if (!container) return true;
 
-		const threshold = 50;
+		const threshold = 35;
 		const isNearBottom =
 			container.scrollTop + container.clientHeight >=
 			container.scrollHeight - threshold;
@@ -81,6 +82,13 @@ export function ChatMessages({
 			container.scrollTop = container.scrollHeight;
 		}
 	}, []);
+
+	// Reset scroll state when messages are cleared (new chat)
+	useEffect(() => {
+		if (messages.length === 0) {
+			setIsAtBottom(true);
+		}
+	}, [messages.length]);
 
 	// Auto-scroll when messages change
 	useEffect(() => {
@@ -128,20 +136,37 @@ export function ChatMessages({
 							onApprovePermission={onApprovePermission}
 						/>
 					))}
-					{isSending && (
-						<div className="agent-client-loading-indicator">
-							<div className="agent-client-loading-dots">
-								<div className="agent-client-loading-dot"></div>
-								<div className="agent-client-loading-dot"></div>
-								<div className="agent-client-loading-dot"></div>
-								<div className="agent-client-loading-dot"></div>
-								<div className="agent-client-loading-dot"></div>
-								<div className="agent-client-loading-dot"></div>
-								<div className="agent-client-loading-dot"></div>
-								<div className="agent-client-loading-dot"></div>
-								<div className="agent-client-loading-dot"></div>
-							</div>
+					<div
+						className={`agent-client-loading-indicator ${!isSending ? "agent-client-hidden" : ""}`}
+					>
+						<div className="agent-client-loading-dots">
+							<div className="agent-client-loading-dot"></div>
+							<div className="agent-client-loading-dot"></div>
+							<div className="agent-client-loading-dot"></div>
+							<div className="agent-client-loading-dot"></div>
+							<div className="agent-client-loading-dot"></div>
+							<div className="agent-client-loading-dot"></div>
+							<div className="agent-client-loading-dot"></div>
+							<div className="agent-client-loading-dot"></div>
+							<div className="agent-client-loading-dot"></div>
 						</div>
+					</div>
+					{!isAtBottom && (
+						<button
+							className="agent-client-scroll-to-bottom"
+							onClick={() => {
+								const container = containerRef.current;
+								if (container) {
+									container.scrollTo({
+										top: container.scrollHeight,
+										behavior: "smooth",
+									});
+								}
+							}}
+							ref={(el) => {
+								if (el) setIcon(el, "chevron-down");
+							}}
+						/>
 					)}
 				</>
 			)}

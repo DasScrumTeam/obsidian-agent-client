@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Platform, Notice } from "obsidian";
+import { ItemView, WorkspaceLeaf, Platform, Notice, Menu } from "obsidian";
 import type {
 	IChatViewContainer,
 	ChatViewType,
@@ -15,8 +15,6 @@ import { TabBar } from "./TabBar";
 import { ChatHeader } from "./ChatHeader";
 import { ChatMessages } from "./ChatMessages";
 import { ChatInput } from "./ChatInput";
-import { HeaderMenu } from "./HeaderMenu";
-
 // Utility imports
 import { getLogger, Logger } from "../../shared/logger";
 
@@ -29,9 +27,6 @@ import {
 	type TabCachedState,
 } from "../../hooks/useChatController";
 import { useTabManager } from "../../hooks/useTabManager";
-
-// Domain model imports
-import type { ImagePromptContent } from "../../domain/models/prompt-content";
 
 // Type definitions for Obsidian internal APIs
 interface AppWithSettings {
@@ -99,20 +94,23 @@ function ChatComponent({
 		activeAgentLabel,
 		availableAgents,
 		errorInfo,
+		agentUpdateNotification,
 		handleSendMessage,
 		handleStopGeneration,
 		handleNewChat,
 		handleExportChat,
 		handleRestartAgent,
 		handleClearError,
+		handleClearAgentUpdate,
 		handleOpenHistory,
 		handleSetMode,
 		handleSetModel,
+		handleSetConfigOption,
 		clearMessages,
 		inputValue,
 		setInputValue,
-		attachedImages,
-		setAttachedImages,
+		attachedFiles,
+		setAttachedFiles,
 		restoredMessage,
 		handleRestoredMessageConsumed,
 		getTabState,
@@ -212,15 +210,8 @@ function ChatComponent({
 	// Refs
 	// ============================================================
 	const acpClientRef = useRef<IAcpClient>(acpAdapter);
-	/** Ref for settings button (for menu positioning) */
-	const menuButtonRef = useRef<HTMLButtonElement>(null);
 	/** Track if initial agent restoration has been performed (prevent re-triggering) */
 	const hasRestoredAgentRef = useRef(false);
-
-	// ============================================================
-	// UI State (ChatView-specific)
-	// ============================================================
-	const [isMenuOpen, setIsMenuOpen] = useState(false);
 
 	// ============================================================
 	// ChatView-specific Callbacks
@@ -247,34 +238,69 @@ function ChatComponent({
 	}, [plugin]);
 
 	// ============================================================
-	// Header Menu Callbacks (ChatView-specific)
+	// Header Menu (Obsidian native Menu API)
 	// ============================================================
-	const handleToggleMenu = useCallback(() => {
-		setIsMenuOpen((prev) => !prev);
-	}, []);
+	const handleShowMenu = useCallback(
+		(e: React.MouseEvent<HTMLButtonElement>) => {
+			const menu = new Menu();
 
-	const handleCloseMenu = useCallback(() => {
-		setIsMenuOpen(false);
-	}, []);
+			// -- Switch agent section --
+			menu.addItem((item) => {
+				item.setTitle("Switch agent").setIsLabel(true);
+			});
 
-	const handleSwitchAgentWithMenu = useCallback(
-		(agentId: string) => {
-			setIsMenuOpen(false);
-			// Use handleNewChatWithPersist to also call view.setAgentId
-			void handleNewChatWithPersist(agentId);
+			for (const agent of availableAgents) {
+				menu.addItem((item) => {
+					item.setTitle(agent.displayName)
+						.setChecked(agent.id === (session.agentId || ""))
+						.onClick(() => {
+							void handleNewChatWithPersist(agent.id);
+						});
+				});
+			}
+
+			menu.addSeparator();
+
+			// -- Actions section --
+			menu.addItem((item) => {
+				item.setTitle("Open new view")
+					.setIcon("plus")
+					.onClick(() => {
+						void plugin.openNewChatViewWithAgent(
+							plugin.settings.defaultAgentId,
+						);
+					});
+			});
+
+			menu.addItem((item) => {
+				item.setTitle("Restart agent")
+					.setIcon("refresh-cw")
+					.onClick(() => {
+						void handleRestartAgent();
+					});
+			});
+
+			menu.addSeparator();
+
+			menu.addItem((item) => {
+				item.setTitle("Plugin settings")
+					.setIcon("settings")
+					.onClick(() => {
+						handleOpenSettings();
+					});
+			});
+
+			menu.showAtMouseEvent(e.nativeEvent);
 		},
-		[handleNewChatWithPersist],
+		[
+			availableAgents,
+			session.agentId,
+			handleNewChatWithPersist,
+			plugin,
+			handleRestartAgent,
+			handleOpenSettings,
+		],
 	);
-
-	const handleRestartAgentWithMenu = useCallback(() => {
-		setIsMenuOpen(false);
-		void handleRestartAgent();
-	}, [handleRestartAgent]);
-
-	const handleOpenNewView = useCallback(() => {
-		setIsMenuOpen(false);
-		void plugin.openNewChatViewWithAgent(plugin.settings.defaultAgentId);
-	}, [plugin]);
 
 	// ============================================================
 	// Agent ID Restoration Effect (ChatView-specific)
@@ -312,23 +338,23 @@ function ChatComponent({
 	const getInputState = useCallback((): ChatInputState | null => {
 		return {
 			text: inputValue,
-			images: attachedImages,
+			files: attachedFiles,
 		};
-	}, [inputValue, attachedImages]);
+	}, [inputValue, attachedFiles]);
 
 	/** Set input state from broadcast commands */
 	const setInputState = useCallback(
 		(state: ChatInputState) => {
 			setInputValue(state.text);
-			setAttachedImages(state.images);
+			setAttachedFiles(state.files);
 		},
-		[setInputValue, setAttachedImages],
+		[setInputValue, setAttachedFiles],
 	);
 
 	/** Send message for broadcast commands (returns true if sent) */
 	const sendMessageForBroadcast = useCallback(async (): Promise<boolean> => {
-		// Allow sending if there's text OR images
-		if (!inputValue.trim() && attachedImages.length === 0) {
+		// Allow sending if there's text OR attachments
+		if (!inputValue.trim() && attachedFiles.length === 0) {
 			return false;
 		}
 		if (!isSessionReady || sessionHistory.loading) {
@@ -338,40 +364,29 @@ function ChatComponent({
 			return false;
 		}
 
-		// Convert attached images to ImagePromptContent format
-		const imagesToSend: ImagePromptContent[] = attachedImages.map(
-			(img) => ({
-				type: "image",
-				data: img.data,
-				mimeType: img.mimeType,
-			}),
-		);
-
 		// Clear input before sending
 		const messageToSend = inputValue.trim();
+		const filesToSend =
+			attachedFiles.length > 0 ? [...attachedFiles] : undefined;
 		setInputValue("");
-		setAttachedImages([]);
+		setAttachedFiles([]);
 
-		await handleSendMessage(
-			messageToSend,
-			imagesToSend.length > 0 ? imagesToSend : undefined,
-		);
+		await handleSendMessage(messageToSend, filesToSend);
 		return true;
 	}, [
 		inputValue,
-		attachedImages,
+		attachedFiles,
 		isSessionReady,
 		sessionHistory.loading,
 		isSending,
 		handleSendMessage,
 		setInputValue,
-		setAttachedImages,
+		setAttachedFiles,
 	]);
 
 	/** Check if this view can send a message */
 	const canSendForBroadcast = useCallback((): boolean => {
-		const hasContent =
-			inputValue.trim() !== "" || attachedImages.length > 0;
+		const hasContent = inputValue.trim() !== "" || attachedFiles.length > 0;
 		return (
 			hasContent &&
 			isSessionReady &&
@@ -380,7 +395,7 @@ function ChatComponent({
 		);
 	}, [
 		inputValue,
-		attachedImages,
+		attachedFiles,
 		isSessionReady,
 		sessionHistory.loading,
 		isSending,
@@ -548,24 +563,51 @@ function ChatComponent({
 			void handleStopGeneration();
 		});
 
+		const exportRef = (
+			workspace as unknown as {
+				on: (
+					name: string,
+					callback: CustomEventCallback,
+				) => ReturnType<typeof workspace.on>;
+			}
+		).on("agent-client:export-chat", (targetViewId?: string) => {
+			// Only respond if this view is the target (or no target specified)
+			if (targetViewId && targetViewId !== viewId) {
+				return;
+			}
+			void handleExportChat();
+		});
+
 		return () => {
 			workspace.offref(approveRef);
 			workspace.offref(rejectRef);
 			workspace.offref(cancelRef);
+			workspace.offref(exportRef);
 		};
 	}, [
 		plugin.app.workspace,
 		permission.approveActivePermission,
 		permission.rejectActivePermission,
 		handleStopGeneration,
+		handleExportChat,
 		viewId,
 	]);
 
 	// ============================================================
 	// Render
 	// ============================================================
+	const chatFontSizeStyle =
+		settings.displaySettings.fontSize !== null
+			? ({
+					"--ac-chat-font-size": `${settings.displaySettings.fontSize}px`,
+				} as React.CSSProperties)
+			: undefined;
+
 	return (
-		<div className="agent-client-chat-view-container">
+		<div
+			className="agent-client-chat-view-container"
+			style={chatFontSizeStyle}
+		>
 			<ChatHeader
 				tabBar={
 					<TabBar
@@ -586,25 +628,9 @@ function ChatComponent({
 					tabManager.createTab();
 				}}
 				onExportChat={() => void handleExportChat()}
-				onToggleMenu={handleToggleMenu}
+				onShowMenu={handleShowMenu}
 				onOpenHistory={handleOpenHistory}
-				menuButtonRef={menuButtonRef}
 			/>
-
-			{isMenuOpen && (
-				<HeaderMenu
-					anchorRef={menuButtonRef}
-					currentAgentId={session.agentId || ""}
-					availableAgents={availableAgents}
-					onSwitchAgent={handleSwitchAgentWithMenu}
-					onOpenNewView={handleOpenNewView}
-					onRestartAgent={handleRestartAgentWithMenu}
-					onOpenPluginSettings={handleOpenSettings}
-					onClose={handleCloseMenu}
-					plugin={plugin}
-					view={view}
-				/>
-			)}
 
 			<ChatMessages
 				messages={messages}
@@ -638,16 +664,24 @@ function ChatComponent({
 				onModeChange={(modeId) => void handleSetMode(modeId)}
 				models={session.models}
 				onModelChange={(modelId) => void handleSetModel(modelId)}
+				configOptions={session.configOptions}
+				onConfigOptionChange={(configId, value) =>
+					void handleSetConfigOption(configId, value)
+				}
+				usage={session.usage}
 				supportsImages={session.promptCapabilities?.image ?? false}
 				agentId={session.agentId}
 				// Controlled component props (for broadcast commands)
 				inputValue={inputValue}
 				onInputChange={setInputValue}
-				attachedImages={attachedImages}
-				onAttachedImagesChange={setAttachedImages}
+				attachedFiles={attachedFiles}
+				onAttachedFilesChange={setAttachedFiles}
 				// Error overlay props
 				errorInfo={errorInfo}
 				onClearError={handleClearError}
+				// Agent update notification props
+				agentUpdateNotification={agentUpdateNotification}
+				onClearAgentUpdate={handleClearAgentUpdate}
 				messages={messages}
 			/>
 		</div>
@@ -866,14 +900,18 @@ export class ChatView extends ItemView implements IChatViewContainer {
 
 	/**
 	 * Programmatically focus this view's input.
+	 * Reveals the leaf first so that Obsidian switches to this tab
+	 * before focusing the textarea (required for sidebar tabs).
 	 */
 	focus(): void {
-		const textarea = this.containerEl.querySelector(
-			"textarea.agent-client-chat-input-textarea",
-		);
-		if (textarea instanceof HTMLTextAreaElement) {
-			textarea.focus();
-		}
+		void this.app.workspace.revealLeaf(this.leaf).then(() => {
+			const textarea = this.containerEl.querySelector(
+				"textarea.agent-client-chat-input-textarea",
+			);
+			if (textarea instanceof HTMLTextAreaElement) {
+				textarea.focus();
+			}
+		});
 	}
 
 	/**

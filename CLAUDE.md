@@ -272,10 +272,9 @@ interface ISettingsAccess {
 **Notifications**: session/update (agent_message_chunk, agent_thought_chunk, tool_call, tool_call_update, plan, available_commands_update, current_mode_update)
 **Requests**: requestPermission
 
-**Supported Agents**:
-- Claude Code: `@anthropics/claude-code-acp` (requires ANTHROPIC_API_KEY)
-- Gemini CLI: `@anthropics/gemini-cli-acp` (requires GOOGLE_API_KEY)
-- Codex: `@zed-industries/codex-acp`
+**Agents**:
+- Claude Code: `@zed-industries/claude-agent-acp` (ANTHROPIC_API_KEY)
+- Gemini CLI: `@anthropics/gemini-cli-acp` (GOOGLE_API_KEY)
 - Custom: Any ACP-compatible agent
 
 ## Testing
